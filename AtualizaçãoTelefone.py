@@ -10,14 +10,10 @@ from selenium.webdriver.common.keys import Keys
 CRED_PATH = r"\\fs01\ITAPEVA ATIVAS\DADOS\SA_Credencials.txt"
 URL_LOGIN = "http://192.168.0.251/gecobi2/qfrontend/#/auth/login"
 
-BD_TELEFONES_SQLAUTH = {
-    "driver": "ODBC Driver 18 for SQL Server",
-    "server": r"BNU-OEA-N1064\DJUR5",
-    "database": "BD_TELEFONES",
-    "user": "sa",
-    "password": "Oea$bnu.DJUR5",
-    "trust_server_certificate": "yes",
-}
+SQL_DRIVER_NAME = "ODBC Driver 18 for SQL Server"
+SQL_SERVER = r"BNU-OEA-N1064\DJUR5"
+SQL_DATABASE = "BD_TELEFONES"
+
 
 def load_credentials(path=CRED_PATH):
     creds = {}
@@ -29,28 +25,33 @@ def load_credentials(path=CRED_PATH):
                 creds[k.strip()] = v.strip().strip('"').strip("'")
     return creds
 
+
 def load_cpj_credentials(path=CRED_PATH):
     creds = load_credentials(path)
-    return creds.get("CPJ_USER"), creds.get("CPJ_PASS")
+    user = creds.get("CPJ_USER") or creds.get("GECOBI_USER") or creds.get("ALPHERATZ_USER")
+    password = creds.get("CPJ_PASS") or creds.get("GECOBI_PASS") or creds.get("ALPHERATZ_PASS")
+    if not user or not password:
+        raise ValueError("Credenciais de login do Gecobi não encontradas no TXT (CPJ_USER/CPJ_PASS).")
+    return user, password
+
 
 def conectar_bd_telefones(path=CRED_PATH):
     creds = load_credentials(path)
-    cfg = BD_TELEFONES_SQLAUTH.copy()
-    user = creds.get("BD_TELEFONES_USER") or cfg["user"]
-    password = creds.get("BD_TELEFONES_PASS") or cfg["password"]
-    driver_name = cfg["driver"]
-    server = cfg["server"]
-    database = cfg["database"]
+    user = creds.get("BD_TELEFONES_USER")
+    password = creds.get("BD_TELEFONES_PASS")
+    if not user or not password:
+        raise ValueError("BD_TELEFONES_USER e BD_TELEFONES_PASS não existem no TXT.")
     conn_str = (
-        f"DRIVER={{{driver_name}}};"
-        f"SERVER={server};"
-        f"DATABASE={database};"
+        f"DRIVER={{{SQL_DRIVER_NAME}}};"
+        f"SERVER={SQL_SERVER};"
+        f"DATABASE={SQL_DATABASE};"
         f"UID={user};"
         f"PWD={password};"
         "TrustServerCertificate=yes;"
     )
-    print("Conectando ao banco...", server, database, user)
+    print("Conectando ao BD_TELEFONES com usuário do TXT:", user)
     return pyodbc.connect(conn_str)
+
 
 def find_checkbox(driver, name_value=None, xpath_value=None, max_depth=6, depth=0):
     if depth > max_depth:
@@ -78,6 +79,7 @@ def find_checkbox(driver, name_value=None, xpath_value=None, max_depth=6, depth=
                 pass
     return None
 
+
 def find_element_any_frame(driver, by, value, max_depth=6, depth=0):
     if depth > max_depth:
         return None
@@ -101,6 +103,7 @@ def find_element_any_frame(driver, by, value, max_depth=6, depth=0):
             except:
                 pass
     return None
+
 
 def abrir_gecobi_com_cpj():
     usuario, senha = load_cpj_credentials()
@@ -152,6 +155,7 @@ def abrir_gecobi_com_cpj():
         driver.execute_script("arguments[0].click();", c2)
 
     return driver
+
 
 driver = abrir_gecobi_com_cpj()
 conn = conectar_bd_telefones()
