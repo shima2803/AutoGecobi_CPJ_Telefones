@@ -121,6 +121,7 @@ def abrir_gecobi_com_cpj():
     driver.get(URL_LOGIN)
     wait = WebDriverWait(driver, 30)
 
+    # ---------------------- LOGIN ----------------------
     u = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[aria-label='Usuário']")))
     time.sleep(0.5)
     u.clear()
@@ -135,8 +136,43 @@ def abrir_gecobi_com_cpj():
     time.sleep(0.5)
     p.send_keys(Keys.ENTER)
 
+    # ------------------------------------------------------------------
+    # CASO APAREÇA O CHECKBOX EXTRA, clica nele e DEPOIS clica de novo no "Entrar"
+    # ------------------------------------------------------------------
+    try:
+        time.sleep(1.5)  # tempo para tela extra renderizar
+        extra_chk = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "form div.q-checkbox.cursor-pointer")
+            )
+        )
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", extra_chk)
+        driver.execute_script("arguments[0].click();", extra_chk)
+        print("Checkbox extra (Quasar) marcado.")
+
+        # agora clica novamente no botão "Entrar"
+        try:
+            btn_entrar = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable(
+                    (
+                        By.XPATH,
+                        "//span[@class='block' and normalize-space()='Entrar']/ancestor::button"
+                    )
+                )
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn_entrar)
+            driver.execute_script("arguments[0].click();", btn_entrar)
+            print("Botão 'Entrar' clicado novamente após marcar o checkbox.")
+        except Exception:
+            print("Botão 'Entrar' não encontrado após o checkbox extra.")
+    except Exception:
+        print("Checkbox extra não apareceu, seguindo fluxo normal de login.")
+
+    # ---------------------- MENU SUPERIOR ----------------------
+
+    # Ícone 'calculate'
     c = wait.until(
-        EC.element_to_be_clickable(
+        EC.presence_of_element_located(
             (
                 By.XPATH,
                 "//i[contains(@class,'material-icons') and normalize-space()='calculate']",
@@ -144,45 +180,64 @@ def abrir_gecobi_com_cpj():
         )
     )
     time.sleep(0.5)
-    c.click()
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", c)
+    driver.execute_script("arguments[0].click();", c)
+    print("Ícone 'calculate' clicado.")
 
+    # Menu 'Operação'
     o = wait.until(
-        EC.element_to_be_clickable(
+        EC.presence_of_element_located(
             (By.XPATH, "//div[contains(@class,'q-item__label') and normalize-space()='Operação']")
         )
     )
     time.sleep(0.5)
-    o.click()
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", o)
+    driver.execute_script("arguments[0].click();", o)
+    print("Menu 'Operação' clicado.")
 
+    # Submenu 'Telefones'
     t = wait.until(
-        EC.element_to_be_clickable(
+        EC.presence_of_element_located(
             (
                 By.XPATH,
-                "//div[contains(@class,'q-item__section') and contains(@class,'q-item__section--main') and normalize-space()='Telefones']",
+                "//div[contains(@class,'q-item__section') and "
+                "contains(@class,'q-item__section--main') and normalize-space()='Telefones']",
             )
         )
     )
     time.sleep(0.5)
-    t.click()
+    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", t)
+    driver.execute_script("arguments[0].click();", t)
+    print("Submenu 'Telefones' clicado.")
 
+    # ---------------------- ENTRA NO LEGADO ----------------------
     time.sleep(2)
     driver.switch_to.default_content()
     wait.until(EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, "iframe.frame-legado")))
 
+    # checkboxes l[desbloqueio] e l[lib_processamento] dentro do legado
     c1 = find_checkbox(driver, "l[desbloqueio]", "/html/body/table[2]/tbody/tr[4]/td[2]/font[1]/input")
     if c1:
         driver.execute_script("arguments[0].scrollIntoView(true);", c1)
         time.sleep(0.2)
         driver.execute_script("arguments[0].click();", c1)
+        print("Checkbox 'desbloqueio' marcado.")
+    else:
+        print("Checkbox 'desbloqueio' não encontrado.")
 
     c2 = find_checkbox(driver, "l[lib_processamento]", "/html/body/table[2]/tbody/tr[5]/td[2]/font[1]/input")
     if c2:
         driver.execute_script("arguments[0].scrollIntoView(true);", c2)
         time.sleep(0.2)
         driver.execute_script("arguments[0].click();", c2)
+        print("Checkbox 'lib_processamento' marcado.")
+    else:
+        print("Checkbox 'lib_processamento' não encontrado.")
 
     return driver
 
+
+# ===================== FLUXO PRINCIPAL =====================
 
 driver = abrir_gecobi_com_cpj()
 conn = conectar_bd_telefones()
