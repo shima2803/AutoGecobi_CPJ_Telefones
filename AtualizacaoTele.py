@@ -11,20 +11,21 @@ CRED_PATH = r"\\fs01\ITAPEVA ATIVAS\DADOS\SA_Credencials.txt"
 URL_LOGIN = "http://192.168.0.251/gecobi2/qfrontend/#/auth/login"
 
 
+# =====================================================================
+# CARREGAR CREDENCIAIS
+# =====================================================================
 def load_credentials(path=CRED_PATH):
     ns = {}
     base_globals = {}
     try:
         import pymysql
         base_globals["pymysql"] = pymysql
-    except ImportError:
-        class Dummy:
-            class cursors:
-                class Cursor:
-                    pass
-        base_globals["pymysql"] = Dummy
+    except:
+        base_globals["pymysql"] = None
+
     with open(path, "r", encoding="utf-8") as f:
         code = f.read()
+
     exec(code, base_globals, ns)
     return ns
 
@@ -38,18 +39,47 @@ def load_cpj_credentials(path=CRED_PATH):
     return user, password
 
 
+# =====================================================================
+# CONECTAR AO BANCO (ATUALIZADO COM AUTO-FALLBACK DE DRIVER)
+# =====================================================================
 def conectar_bd_telefones(path=CRED_PATH):
     creds = load_credentials(path)
+
     cfg = creds.get("BD_TELEFONES_SQLAUTH") or creds.get("BD_TELEFONES_WINDOWS")
     if not cfg:
-        raise ValueError("BD_TELEFONES_SQLAUTH ou BD_TELEFONES_WINDOWS não definidos no TXT.")
-    driver_name = cfg.get("driver")
-    server = cfg.get("server")
-    database = cfg.get("database")
-    user = cfg.get("user") or creds.get("BD_TELEFONES_USER")
-    password = cfg.get("password") or creds.get("BD_TELEFONES_PASS")
+        raise ValueError("BD_TELEFONES_SQLAUTH / BD_TELEFONES_WINDOWS não definidos no TXT.")
+
+    driver_name_cfg = (cfg.get("driver") or "").strip()
+    server = (cfg.get("server") or "").strip()
+    database = (cfg.get("database") or "").strip()
+    user = (cfg.get("user") or creds.get("BD_TELEFONES_USER") or "").strip()
+    password = (cfg.get("password") or creds.get("BD_TELEFONES_PASS") or "").strip()
+
+    print("\n== CONFIGURAÇÃO DO BD LIDA NO TXT ==")
+    print(cfg)
+    print("Driver informado:", repr(driver_name_cfg))
+
+    drivers_disp = [d.strip() for d in pyodbc.drivers()]
+    print("Drivers ODBC disponíveis:", drivers_disp)
+
+    # Tenta usar o driver do TXT → senão usa o primeiro "SQL Server" disponível
+    if driver_name_cfg in drivers_disp:
+        driver_name = driver_name_cfg
+    else:
+        candidatos = [d for d in drivers_disp if "SQL Server" in d]
+        if not candidatos:
+            raise RuntimeError(
+                f"Nenhum driver SQL Server disponível. Drivers encontrados: {drivers_disp}"
+            )
+        driver_name = candidatos[0]
+        print(f"AVISO: driver '{driver_name_cfg}' não existe nesta máquina. Usando '{driver_name}'.")
+
+    if not server or not database:
+        raise RuntimeError(f"Configuração do banco incompleta: server={server}, database={database}")
+
     if not user or not password:
-        raise ValueError("Usuário/senha do BD_TELEFONES não definidos no TXT.")
+        raise RuntimeError("Usuário/senha do banco não encontrados no TXT.")
+
     conn_str = (
         f"DRIVER={{{driver_name}}};"
         f"SERVER={server};"
@@ -58,21 +88,31 @@ def conectar_bd_telefones(path=CRED_PATH):
         f"PWD={password};"
         "TrustServerCertificate=yes;"
     )
-    print(f"Conectando ao BD_TELEFONES: {server} | DB={database} | USER={user}")
+
+    print("\nString de conexão (senha oculta):")
+    print(conn_str.replace(password, "********"))
+
+    print(f"Conectando ao BD: {server} | DB={database} | USER={user}")
     return pyodbc.connect(conn_str)
 
 
+# =====================================================================
+# FUNÇÕES DE LOCALIZAÇÃO EM FRAMES
+# =====================================================================
 def find_checkbox(driver, name_value=None, xpath_value=None, max_depth=6, depth=0):
     if depth > max_depth:
         return None
+
     if name_value:
         for el in driver.find_elements(By.NAME, name_value):
             if el.tag_name.lower() == "input":
                 return el
+
     if xpath_value:
         for el in driver.find_elements(By.XPATH, xpath_value):
             if el.tag_name.lower() == "input":
                 return el
+
     frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
     for fr in frames:
         try:
@@ -86,19 +126,23 @@ def find_checkbox(driver, name_value=None, xpath_value=None, max_depth=6, depth=
                 driver.switch_to.parent_frame()
             except:
                 pass
+
     return None
 
 
 def find_element_any_frame(driver, by, value, max_depth=6, depth=0):
     if depth > max_depth:
         return None
+
     try:
         elems = driver.find_elements(by, value)
         if elems:
             return elems[0]
     except:
         pass
+
     frames = driver.find_elements(By.TAG_NAME, "frame") + driver.find_elements(By.TAG_NAME, "iframe")
+
     for fr in frames:
         try:
             driver.switch_to.frame(fr)
@@ -111,166 +155,119 @@ def find_element_any_frame(driver, by, value, max_depth=6, depth=0):
                 driver.switch_to.parent_frame()
             except:
                 pass
+
     return None
 
 
+# =====================================================================
+# ABRIR Gecobi COM LOGIN + MENU
+# =====================================================================
 def abrir_gecobi_com_cpj():
     usuario, senha = load_cpj_credentials()
     driver = webdriver.Chrome()
     driver.maximize_window()
-    driver.get(URL_LOGIN)
     wait = WebDriverWait(driver, 30)
 
-    # ---------------------- LOGIN ----------------------
+    driver.get(URL_LOGIN)
+
+    # -------- Login --------
     u = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[aria-label='Usuário']")))
-    time.sleep(0.5)
-    u.clear()
     u.send_keys(usuario)
     u.send_keys(Keys.TAB)
 
     p = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[aria-label='Senha']")))
-    time.sleep(0.5)
-    p.clear()
     p.send_keys(senha)
-    p.send_keys(Keys.TAB)
-    time.sleep(0.5)
     p.send_keys(Keys.ENTER)
 
-    # ------------------------------------------------------------------
-    # CASO APAREÇA O CHECKBOX EXTRA, clica nele e DEPOIS clica de novo no "Entrar"
-    # ------------------------------------------------------------------
+    # -------- Checkbox extra (quando aparece) --------
     try:
-        time.sleep(1.5)  # tempo para tela extra renderizar
+        time.sleep(1.5)
         extra_chk = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, "form div.q-checkbox.cursor-pointer")
-            )
+            EC.presence_of_element_located((By.CSS_SELECTOR, "form div.q-checkbox.cursor-pointer"))
         )
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", extra_chk)
         driver.execute_script("arguments[0].click();", extra_chk)
-        print("Checkbox extra (Quasar) marcado.")
+        print("Checkbox extra marcado.")
 
-        # agora clica novamente no botão "Entrar"
-        try:
-            btn_entrar = WebDriverWait(driver, 5).until(
-                EC.element_to_be_clickable(
-                    (
-                        By.XPATH,
-                        "//span[@class='block' and normalize-space()='Entrar']/ancestor::button"
-                    )
-                )
-            )
-            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn_entrar)
-            driver.execute_script("arguments[0].click();", btn_entrar)
-            print("Botão 'Entrar' clicado novamente após marcar o checkbox.")
-        except Exception:
-            print("Botão 'Entrar' não encontrado após o checkbox extra.")
-    except Exception:
-        print("Checkbox extra não apareceu, seguindo fluxo normal de login.")
-
-    # ---------------------- MENU SUPERIOR ----------------------
-
-    # Ícone 'calculate'
-    c = wait.until(
-        EC.presence_of_element_located(
-            (
-                By.XPATH,
-                "//i[contains(@class,'material-icons') and normalize-space()='calculate']",
+        # clicar novamente no botão Entrar
+        btn_entrar = WebDriverWait(driver, 3).until(
+            EC.element_to_be_clickable(
+                (By.XPATH, "//span[@class='block' and normalize-space()='Entrar']/ancestor::button")
             )
         )
-    )
-    time.sleep(0.5)
-    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", c)
-    driver.execute_script("arguments[0].click();", c)
+        driver.execute_script("arguments[0].click();", btn_entrar)
+        print("Botão 'Entrar' clicado novamente.")
+    except:
+        print("Não apareceu checkbox extra. Seguindo...")
+
+    # -------- Menu superior: calculate --------
+    calc = wait.until(EC.presence_of_element_located(
+        (By.XPATH, "//i[contains(@class,'material-icons') and normalize-space()='calculate']")
+    ))
+    driver.execute_script("arguments[0].click();", calc)
     print("Ícone 'calculate' clicado.")
 
-    # Menu 'Operação'
-    o = wait.until(
-        EC.presence_of_element_located(
-            (By.XPATH, "//div[contains(@class,'q-item__label') and normalize-space()='Operação']")
-        )
-    )
-    time.sleep(0.5)
-    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", o)
-    driver.execute_script("arguments[0].click();", o)
+    # -------- Operação --------
+    op = wait.until(EC.presence_of_element_located(
+        (By.XPATH, "//div[contains(@class,'q-item__label') and normalize-space()='Operação']")
+    ))
+    driver.execute_script("arguments[0].click();", op)
     print("Menu 'Operação' clicado.")
 
-    # Submenu 'Telefones'
-    t = wait.until(
-        EC.presence_of_element_located(
-            (
-                By.XPATH,
-                "//div[contains(@class,'q-item__section') and "
-                "contains(@class,'q-item__section--main') and normalize-space()='Telefones']",
-            )
-        )
-    )
-    time.sleep(0.5)
-    driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", t)
-    driver.execute_script("arguments[0].click();", t)
-    print("Submenu 'Telefones' clicado.")
+    # -------- Telefones --------
+    tel = wait.until(EC.presence_of_element_located(
+        (By.XPATH, "//div[contains(@class,'q-item__section--main') and normalize-space()='Telefones']")
+    ))
+    driver.execute_script("arguments[0].click();", tel)
+    print("Menu 'Telefones' clicado.")
 
-    # ---------------------- ENTRA NO LEGADO ----------------------
+    # -------- Entrar no legado --------
     time.sleep(2)
     driver.switch_to.default_content()
     wait.until(EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, "iframe.frame-legado")))
 
-    # checkboxes l[desbloqueio] e l[lib_processamento] dentro do legado
-    c1 = find_checkbox(driver, "l[desbloqueio]", "/html/body/table[2]/tbody/tr[4]/td[2]/font[1]/input")
+    # checkbox desbloqueio
+    c1 = find_checkbox(driver, "l[desbloqueio]")
     if c1:
-        driver.execute_script("arguments[0].scrollIntoView(true);", c1)
-        time.sleep(0.2)
         driver.execute_script("arguments[0].click();", c1)
-        print("Checkbox 'desbloqueio' marcado.")
-    else:
-        print("Checkbox 'desbloqueio' não encontrado.")
 
-    c2 = find_checkbox(driver, "l[lib_processamento]", "/html/body/table[2]/tbody/tr[5]/td[2]/font[1]/input")
+    # checkbox lib_processamento
+    c2 = find_checkbox(driver, "l[lib_processamento]")
     if c2:
-        driver.execute_script("arguments[0].scrollIntoView(true);", c2)
-        time.sleep(0.2)
         driver.execute_script("arguments[0].click();", c2)
-        print("Checkbox 'lib_processamento' marcado.")
-    else:
-        print("Checkbox 'lib_processamento' não encontrado.")
 
     return driver
 
 
-# ===================== FLUXO PRINCIPAL =====================
+# =====================================================================
+# PROCESSO PRINCIPAL
+# =====================================================================
 
 driver = abrir_gecobi_com_cpj()
 conn = conectar_bd_telefones()
 cursor = conn.cursor()
 
-cursor.execute(
-    """
+cursor.execute("""
     SELECT
         CONCAT(TE.ddd, TE.Numero) AS Telefone,
         p.CpfCnpj,
         CASE
-            WHEN TE.ScoreFinal > 80 THEN 'HOT'
+            WHEN TE.ScoreFinal >= 80 THEN 'HOT'
             WHEN TE.ScoreFinal >= 60 THEN 'ALTA'
             WHEN TE.ScoreFinal >= 40 THEN 'MEDIA'
-            WHEN TE.ScoreFinal < 20 AND TE.Discado = 1 THEN 'IMPRODUTIVO'
+            WHEN TE.ScoreFinal < 20 AND TE.Discado = 1 and te.contato = 0 THEN 'IMPRODUTIVO'
             ELSE 'PEQUENA'
         END AS Classificacao,
         TE.ScoreFinal
     FROM dbo.Telefone TE
     JOIN PessoaTelefone PT ON PT.IdTelefone = TE.IdTelefone
     JOIN Pessoa p ON p.IdPessoa = PT.IdPessoa;
-    """
-)
+""")
 
 rows = cursor.fetchall()
 
 class_map = {}
-for tel, cpfcnpj, classif, score in rows:
-    key = str(classif).strip().upper()
-    tel_str = str(tel).strip()
-    cpf_str = str(cpfcnpj).strip()
-    if tel_str and cpf_str:
-        class_map.setdefault(key, []).append(f"{tel_str};{cpf_str}")
+for tel, cpf, cls, score in rows:
+    class_map.setdefault(cls.upper(), []).append(f"{tel};{cpf}")
 
 status_config = [
     ("IMPRODUTIVO", "3"),
@@ -280,72 +277,53 @@ status_config = [
     ("PEQUENA", "6"),
 ]
 
-for class_name, select_value in status_config:
+for class_name, valor_select in status_config:
     lista = class_map.get(class_name, [])
-    print(f"Status {class_name}: {len(lista)} registros")
+    print(f"\nStatus {class_name}: {len(lista)} registros")
+
     if not lista:
         continue
 
-    texto_fones = "\n".join(lista)
+    texto = "\n".join(lista)
 
     driver.switch_to.default_content()
     WebDriverWait(driver, 10).until(
         EC.frame_to_be_available_and_switch_to_it((By.CSS_SELECTOR, "iframe.frame-legado"))
     )
 
-    combo = find_element_any_frame(driver, By.NAME, "l[stnew]", max_depth=6)
+    # selecionar status
+    combo = find_element_any_frame(driver, By.NAME, "l[stnew]")
     if combo:
-        driver.execute_script("arguments[0].scrollIntoView(true);", combo)
-        time.sleep(0.2)
-        Select(combo).select_by_value(select_value)
-        print(f"Status '{class_name}' selecionado no combo.")
+        Select(combo).select_by_value(valor_select)
 
-    textarea = find_element_any_frame(driver, By.NAME, "l[fones]", max_depth=6)
-    if not textarea:
-        textarea = find_element_any_frame(
-            driver, By.XPATH, "/html/body/table[2]/tbody/tr[6]/td[2]/textarea", max_depth=6
-        )
-
-    if textarea and texto_fones:
-        driver.execute_script("arguments[0].scrollIntoView(true);", textarea)
-        driver.execute_script("arguments[0].value = arguments[1];", textarea, texto_fones)
+    # preencher textarea
+    textarea = find_element_any_frame(driver, By.NAME, "l[fones]")
+    if textarea:
+        driver.execute_script("arguments[0].value = arguments[1];", textarea, texto)
         driver.execute_script("arguments[0].dispatchEvent(new Event('input'));", textarea)
-        print(f"Telefones/CPFs colados para status {class_name}.")
 
-    chk_executar = find_element_any_frame(driver, By.NAME, "l[executar]", max_depth=6)
-    if chk_executar:
-        driver.execute_script("arguments[0].scrollIntoView(true);", chk_executar)
-        time.sleep(0.1)
-        driver.execute_script("arguments[0].click();", chk_executar)
-        print("Checkbox 'executar' marcado.")
-    else:
-        print("Checkbox 'executar' não encontrado.")
+    # checkbox executar
+    chk = find_element_any_frame(driver, By.NAME, "l[executar]")
+    if chk:
+        driver.execute_script("arguments[0].click();", chk)
 
-    btn_executar = find_element_any_frame(driver, By.ID, "confirmaForm", max_depth=6)
-    if btn_executar:
-        driver.execute_script("arguments[0].scrollIntoView(true);", btn_executar)
-        time.sleep(0.1)
-        driver.execute_script("arguments[0].click();", btn_executar)
-        print(f"Botão 'Executar >>' clicado para status {class_name}.")
-    else:
-        print("Botão 'Executar >>' não encontrado.")
+    # botão executar
+    botao = find_element_any_frame(driver, By.ID, "confirmaForm")
+    if botao:
+        driver.execute_script("arguments[0].click();", botao)
 
     time.sleep(2)
 
-print("Processo concluído para todos os status.")
-time.sleep(1)
+print("\nProcesso concluído.")
 
 try:
     conn.close()
-    print("Conexão com o banco encerrada.")
 except:
     pass
 
 try:
     driver.quit()
-    print("Navegador fechado.")
 except:
     pass
 
-print("Processo finalizado.")
-time.sleep(1)
+print("Finalizado.")
